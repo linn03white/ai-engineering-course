@@ -350,8 +350,8 @@ def ask_model(prompt: str, max_tokens: int = 2500) -> str:
         verify_ssl_certs=False,
     ) as client:
         response = client.chat({
+            "model": "GigaChat-2",
             "messages": [{"role": "user", "content": prompt}],
-            "model": "GigaChat",
             "temperature": 0.7,
             "max_tokens": max_tokens,
         })
