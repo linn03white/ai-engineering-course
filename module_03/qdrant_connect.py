@@ -14,7 +14,6 @@
     python vector_store.py --embedded
 """
 
-
 import sys
 from pathlib import Path
 
@@ -49,9 +48,9 @@ def make_client(embedded: bool, db_path: Path) -> QdrantClient:
         # остаётся на случай отката — так же, как на сервере.
         db_path.mkdir(parents=True, exist_ok=True)
         print(f"Режим embedded: база в папке {db_path.name}/ (без Docker и UI)")
-        return QdrantClient(path=str(db_path))
+        return QdrantClient(path=str(db_path), timeout=60)
 
-    client = QdrantClient(url=QDRANT_URL)
+    client = QdrantClient(url=QDRANT_URL, timeout=60)
     try:
         client.get_collections()
     except Exception:

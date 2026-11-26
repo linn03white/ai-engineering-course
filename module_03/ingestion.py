@@ -48,8 +48,14 @@ from pathlib import Path
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    CreateAlias, CreateAliasOperation, DeleteAlias, DeleteAliasOperation,
-    Distance, PayloadSchemaType, PointStruct, VectorParams,
+    CreateAlias,
+    CreateAliasOperation,
+    DeleteAlias,
+    DeleteAliasOperation,
+    Distance,
+    PayloadSchemaType,
+    PointStruct,
+    VectorParams,
 )
 from sentence_transformers import SentenceTransformer
 
@@ -93,32 +99,38 @@ OVERLAP = 150
 #  НАРЕЗКА НА ЧАНКИ
 # ====================================================================
 
+
 def chunk_text(text: str, size: int, overlap: int) -> list:
-    """Режет текст на куски по `size` символов с нахлёстом `overlap`.
+    """Режет текст на куски по `size` символов с нахлёстом `overlap`."""
 
-    TODO 1: сейчас функция возвращает весь текст одним куском — это заглушка.
-    С ней индекс соберётся и поиск заработает, только искать будет по целым
-    записям. Насколько это плохо, увидишь в практике 2: там есть замер.
+    # 1. Защита от вечного цикла
+    if overlap >= size:
+        raise ValueError(
+            f"overlap ({overlap}) должен быть меньше size ({size}): "
+            f"иначе шаг окна нулевой и нарезка зациклится"
+        )
 
-    Что сделать:
-      1. Если overlap >= size — поднять ValueError с понятным сообщением:
-         шаг окна получится нулевым, и цикл никогда не кончится.
-      2. Шаг окна: step = size - overlap.
-      3. Идти по тексту от start = 0, пока start < len(text):
-         кусок = text[start:start + size];
-         если в куске есть непробельные символы — добавить его в список;
-         сдвинуть start на step.
-      4. Вернуть список кусков.
+    chunks = []
+    step = size - overlap
+    start = 0
 
-    Проверить себя: chunk_text('абвгд'*100, 200, 50) -> 4 куска
-    длиной 200, 200, 200 и 50 символов.
-    """
-    return [text]
+    # 2. Идем по тексту окном
+    while start < len(text):
+        piece = text[start : start + size]
+
+        # 3. Если кусок не из одних пробелов - берем его
+        if piece.strip():
+            chunks.append(piece)
+
+        start += step
+
+    return chunks
 
 
 # ====================================================================
 #  КОД НИЖЕ УЖЕ РАБОТАЕТ — менять не нужно
 # ====================================================================
+
 
 def chunk_id(record: dict, chunk_no: int) -> str:
     """Идентификатор чанка, который не меняется от прогона к прогону.
@@ -135,8 +147,10 @@ def chunk_id(record: dict, chunk_no: int) -> str:
     получили бы один идентификатор, и один молча затёр бы другой при
     загрузке — в базе стало бы меньше точек, чем чанков.
     """
-    key = (f"{record['doc_id']}|{record.get('record_no')}|{record.get('page')}"
-           f"|{record.get('section')}|{chunk_no}")
+    key = (
+        f"{record['doc_id']}|{record.get('record_no')}|{record.get('page')}"
+        f"|{record.get('section')}|{chunk_no}"
+    )
     return str(uuid.uuid5(NAMESPACE, key))
 
 
@@ -150,21 +164,23 @@ def build_chunks(records: list) -> list:
     for record in records:
         pieces = chunk_text(record["text"], CHUNK_SIZE, OVERLAP)
         for chunk_no, piece in enumerate(pieces):
-            chunks.append({
-                "id": chunk_id(record, chunk_no),
-                "payload": {
-                    "doc_id": record["doc_id"],
-                    "type": record["type"],
-                    "title": record["title"],
-                    "equipment": record["equipment"],
-                    "version": record["version"],
-                    "date": record["date"],
-                    "page": record["page"],
-                    "section": record["section"],
-                    "chunk_no": chunk_no,
-                    "text": piece,
-                },
-            })
+            chunks.append(
+                {
+                    "id": chunk_id(record, chunk_no),
+                    "payload": {
+                        "doc_id": record["doc_id"],
+                        "type": record["type"],
+                        "title": record["title"],
+                        "equipment": record["equipment"],
+                        "version": record["version"],
+                        "date": record["date"],
+                        "page": record["page"],
+                        "section": record["section"],
+                        "chunk_no": chunk_no,
+                        "text": piece,
+                    },
+                }
+            )
     return chunks
 
 
@@ -174,17 +190,23 @@ def switch_alias(client: QdrantClient, collection: str):
     Удаление несуществующего алиаса — не ошибка, поэтому первый запуск
     отрабатывает так же, как все последующие.
     """
-    client.update_collection_aliases(change_aliases_operations=[
-        DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=ALIAS)),
-        CreateAliasOperation(create_alias=CreateAlias(
-            collection_name=collection, alias_name=ALIAS)),
-    ])
+    client.update_collection_aliases(
+        change_aliases_operations=[
+            DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=ALIAS)),
+            CreateAliasOperation(
+                create_alias=CreateAlias(collection_name=collection, alias_name=ALIAS)
+            ),
+        ]
+    )
 
 
 def drop_old_collections(client: QdrantClient, keep: int):
     """Убирает старые сборки индекса, оставляя последние `keep`."""
-    ours = sorted(c.name for c in client.get_collections().collections
-                  if c.name.startswith(COLLECTION_PREFIX))
+    ours = sorted(
+        c.name
+        for c in client.get_collections().collections
+        if c.name.startswith(COLLECTION_PREFIX)
+    )
     for name in ours[:-keep]:
         client.delete_collection(name)
         print(f"    удалена старая коллекция: {name}")
@@ -199,8 +221,11 @@ def build_index(client: QdrantClient, model: SentenceTransformer) -> tuple:
 
     print(f"Записей корпуса: {len(records)}  ->  чанков: {len(chunks)}")
     print("Считаю эмбеддинги...")
-    vectors = model.encode([c["payload"]["text"] for c in chunks],
-                           batch_size=ENCODE_BATCH, show_progress_bar=True)
+    vectors = model.encode(
+        [c["payload"]["text"] for c in chunks],
+        batch_size=ENCODE_BATCH,
+        show_progress_bar=True,
+    )
 
     collection = f"{COLLECTION_PREFIX}_{time.strftime('%Y%m%d_%H%M%S')}"
     client.create_collection(
@@ -215,13 +240,18 @@ def build_index(client: QdrantClient, model: SentenceTransformer) -> tuple:
     # фильтрации перебирает всю коллекцию — на учебном корпусе незаметно,
     # на реальном заметно сразу.
     for field in ("type", "doc_id", "equipment"):
-        client.create_payload_index(collection_name=collection, field_name=field,
-                                    field_schema=PayloadSchemaType.KEYWORD)
+        client.create_payload_index(
+            collection_name=collection,
+            field_name=field,
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
 
     client.upsert(
         collection_name=collection,
-        points=[PointStruct(id=c["id"], vector=v.tolist(), payload=c["payload"])
-                for c, v in zip(chunks, vectors)],
+        points=[
+            PointStruct(id=c["id"], vector=v.tolist(), payload=c["payload"])
+            for c, v in zip(chunks, vectors)
+        ],
         wait=True,
     )
 
@@ -241,8 +271,9 @@ def build_index(client: QdrantClient, model: SentenceTransformer) -> tuple:
         "chunks": len(chunks),
         "corpus_fingerprint": corpus_fingerprint(),
     }
-    MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                             encoding="utf-8")
+    MANIFEST_PATH.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return manifest, chunks
 
 
@@ -261,8 +292,11 @@ def show_sample(chunks: list, count: int = 3):
 
 def main():
     args = argparse.ArgumentParser(description="Сборка индекса чанков в Qdrant")
-    args.add_argument("--embedded", action="store_true",
-                      help="резервный режим без Docker (база в локальной папке)")
+    args.add_argument(
+        "--embedded",
+        action="store_true",
+        help="резервный режим без Docker (база в локальной папке)",
+    )
     args = args.parse_args()
 
     client = make_client(args.embedded, DB_PATH)
@@ -278,8 +312,10 @@ def main():
         print(f"ИНДЕКС СОБРАН за {time.time() - started:.1f} с")
         print("=" * 88)
         print(f"  CHUNK_SIZE={CHUNK_SIZE}, OVERLAP={OVERLAP}")
-        print(f"  документов {manifest['documents']}, записей {manifest['records']}, "
-              f"чанков {manifest['chunks']}")
+        print(
+            f"  документов {manifest['documents']}, записей {manifest['records']}, "
+            f"чанков {manifest['chunks']}"
+        )
         print(f"  коллекция «{manifest['collection']}», алиас «{ALIAS}»")
         print(f"  манифест: {MANIFEST_PATH.name}")
         if not args.embedded:
